@@ -17,6 +17,16 @@ export interface Driver extends EventEmitter {
     send(phone: string, message: string): Promise<string | null>;
     sendMedia(phone: string, media: Media): Promise<string | null>;
 }
+export function startupDiagnostic(error: unknown): { code: string; message: string } {
+    const detail = error instanceof Error ? error.message : '';
+    if (/could not find chrome|executable.*does not exist|browser was not found/i.test(detail)) return { code: 'CHROME_MISSING', message: 'Chromium is missing. Install the browser and verify CHROME_PATH.' };
+    if (/error while loading shared libraries|cannot open shared object/i.test(detail)) return { code: 'CHROME_DEPENDENCIES', message: 'Chromium system libraries are missing on this host.' };
+    if (/no usable sandbox|running as root without.*sandbox|operation not permitted.*sandbox/i.test(detail)) return { code: 'CHROME_SANDBOX', message: 'Chromium cannot start with the current sandbox permissions. Review the hosting environment.' };
+    if (/singleton|profile.*in use|processsingleton|owner-lock/i.test(detail)) return { code: 'PROFILE_IN_USE', message: 'Another browser owns this session profile. Verify that only one service instance uses the storage.' };
+    if (/eacces|permission denied/i.test(detail)) return { code: 'STORAGE_PERMISSIONS', message: 'Browser or session storage permissions prevent startup.' };
+    if (/timeout|timed out/i.test(detail)) return { code: 'STARTUP_TIMEOUT', message: 'WhatsApp browser startup timed out. Check host resources and access to WhatsApp Web.' };
+    return { code: 'INITIALIZATION_FAILED', message: 'WhatsApp browser initialization failed. Check browser installation, hosting resources, and outbound connectivity.' };
+}
 type Session = {
     status: 'disconnected' | 'connecting' | 'qr_required' | 'connected';
     phone: string | null;
@@ -28,6 +38,7 @@ type Session = {
     recoveries: number;
     hasReady: boolean;
     submission?: Promise<string | null>;
+    lastError?: { code: string; message: string };
 };
 export const keyFor = (app: string, user: string) => createHash('sha256').update(JSON.stringify([app, user])).digest('hex');
 export class Sessions {
@@ -36,7 +47,7 @@ export class Sessions {
     private pending = new Map<string, number>();
     private submissionRequests = new Set<string>();
     public stopping = false;
-    constructor(public root: string, private factory: (key: string) => Driver, private ttl = 20000, private max = 100, private operationMs = 15000, private connectionMs = 90000, private sendMs = 30000) {
+    constructor(public root: string, private factory: (key: string) => Driver, private ttl = 20000, private max = 100, private operationMs = 15000, private connectionMs = 90000, private sendMs = 30000, private diagnostic: (entry: { session: string; code: string; message: string }) => void = entry => console.error(JSON.stringify(entry))) {
     }
     private async lock<T>(key: string, fn: () => Promise<T>): Promise<T> {
         const queued = this.pending.get(key) ?? 0;
@@ -75,7 +86,7 @@ export class Sessions {
         return s;
     }
     private response(s: Session, qr = false) {
-        return { success: true, status: s.status, phone: s.status === 'connected' ? s.phone : null, ...(qr ? { qr: s.qr, expires_at: s.qr ? new Date(s.expires).toISOString() : null } : {}) };
+        return { success: true, status: s.status, phone: s.status === 'connected' ? s.phone : null, ...(qr ? { qr: s.qr, expires_at: s.qr ? new Date(s.expires).toISOString() : null } : {}), ...(s.lastError ? { last_error: s.lastError } : {}) };
     }
     private async bounded<T>(operation: Promise<T>, timeout = this.operationMs): Promise<T> {
         let timer: NodeJS.Timeout | undefined;
@@ -128,13 +139,17 @@ export class Sessions {
         const generation = ++s.generation;
         s.client = c;
         s.hasReady = false;
+        s.lastError = undefined;
         s.status = 'connecting';
         s.connectingSince = Date.now();
         s.phone = null;
         s.qr = null;
         const current = () => s.client === c && s.generation === generation;
         let qrSequence = 0;
+        let started!: () => void;
+        const startup = new Promise<void>(resolve => { started = resolve; });
         c.on('qr', (value: string) => {
+            if (current()) started();
             const sequence = ++qrSequence;
             const deadline = Date.now() + this.ttl;
             void QRCode.toDataURL(value, { type: 'image/png', width: 320 }).then(png => {
@@ -148,6 +163,7 @@ export class Sessions {
         });
         c.on('authenticated', () => {
             if (current()) {
+                started();
                 qrSequence++;
                 s.qr = null;
                 s.expires = 0;
@@ -156,6 +172,8 @@ export class Sessions {
         });
         c.on('ready', () => {
             if (current()) {
+                started();
+                s.lastError = undefined;
                 s.hasReady = true;
                 qrSequence++;
                 const phone = c.phone();
@@ -167,6 +185,8 @@ export class Sessions {
         for (const event of ['disconnected', 'auth_failure']) {
             c.on(event, () => {
                 if (current()) {
+                    s.lastError = { code: event === 'auth_failure' ? 'AUTHENTICATION_FAILED' : 'CLIENT_DISCONNECTED', message: event === 'auth_failure' ? 'WhatsApp authentication failed. Reconnect and scan a fresh QR code.' : 'The WhatsApp browser disconnected before the session was ready. Check browser startup and host resources.' };
+                    this.diagnostic({ session: key, ...s.lastError });
                     s.generation++;
                     s.status = 'disconnected';
                     s.phone = null;
@@ -175,9 +195,13 @@ export class Sessions {
             });
         }
         // Initialization must not hold the lifecycle lock while waiting for a QR scan.
-        void this.bounded(c.initialize(), 90000).catch(() => {
+        const initialization = Promise.resolve().then(() => c.initialize());
+        // Startup must produce a QR or authentication event in time, but scanning is user-driven.
+        void Promise.all([this.bounded(Promise.race([initialization, startup]), this.connectionMs), initialization]).catch(error => {
             void this.lock(key, async () => {
                 if (!current()) return;
+                s.lastError = startupDiagnostic(error);
+                this.diagnostic({ session: key, ...s.lastError });
                 const retry = s.status === 'connecting' && s.recoveries < 1 && !this.stopping;
                 await this.close(s, false);
                 if (retry) {

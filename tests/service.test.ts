@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import request from 'supertest';
-import { Sessions, keyFor, type Driver } from '../src/service.js';
+import { Sessions, keyFor, startupDiagnostic, type Driver } from '../src/service.js';
 import { createApp } from '../src/app.js';
 class Fake extends EventEmitter implements Driver {
     count = 0;
@@ -345,4 +345,52 @@ test('completed client send without an ID succeeds with explicit confirmation me
     assert.deepEqual(await sessions.send('a','u','919876543210','sample'),{success:true,message_id:null,confirmation:'client_completed'});
     assert.equal((await sessions.status('a','u')).status,'connected');
     await sessions.shutdown();await rm(root,{recursive:true});
+});
+
+
+test('startup diagnostics identify host failures without exposing exception details', () => {
+    assert.equal(startupDiagnostic(new Error('Could not find Chrome: private/path secret')).code, 'CHROME_MISSING');
+    assert.equal(startupDiagnostic(new Error('error while loading shared libraries: libnss3.so')).code, 'CHROME_DEPENDENCIES');
+    assert.equal(startupDiagnostic(new Error('ProcessSingleton profile in use')).code, 'PROFILE_IN_USE');
+    assert.ok(!JSON.stringify(startupDiagnostic(new Error('token-secret private startup detail'))).includes('token-secret'));
+});
+
+test('waiting for QR scanning does not consume the browser startup timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wa-qr-startup-'));
+    const clients: Fake[] = [];
+    let finish!: () => void;
+    const sessions = new Sessions(root, () => {
+        const c = new Fake();
+        c.initialize = () => new Promise<void>(resolve => { finish = resolve; });
+        clients.push(c);
+        return c;
+    }, 20000, 10, 15000, 100);
+    await sessions.connect('a', 'u');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    clients[0].emit('qr', 'private-qr');
+    await new Promise(resolve => setTimeout(resolve, 180));
+    assert.equal((await sessions.status('a', 'u', true)).status, 'qr_required');
+    assert.equal(clients.length, 1);
+    finish();
+    await sessions.shutdown();
+    await rm(root, { recursive: true });
+});
+
+test('failed browser startup exposes a safe reason in status and runtime diagnostics', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wa-failed-startup-'));
+    const entries: unknown[] = [];
+    const sessions = new Sessions(root, () => {
+        const client = new Fake();
+        client.initialize = async () => { throw new Error('Could not find Chrome secret-token'); };
+        return client;
+    }, 20000, 10, 15000, 90000, 30000, entry => entries.push(entry));
+    await sessions.connect('a', 'u');
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const result = await sessions.status('a', 'u');
+    assert.equal(result.status, 'disconnected');
+    assert.equal(result.last_error?.code, 'CHROME_MISSING');
+    assert.equal(entries.length, 2);
+    assert.ok(!JSON.stringify(entries).includes('secret-token'));
+    await sessions.shutdown();
+    await rm(root, { recursive: true });
 });
