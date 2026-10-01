@@ -10,6 +10,7 @@ export function createApp(sessions: Sessions, credentials: Credentials) {
         res.set('Cache-Control', 'no-store');
         next();
     });
+    app.get('/', (_req, res) => res.json({ success: true, service: 'WhatsApp service', health: '/health', ready: '/ready' }));
     app.get('/health', (_req, res) => res.json({ success: true }));
     app.get('/ready', (_req, res) => res.status(sessions.stopping ? 503 : 200).json({ success: !sessions.stopping }));
     const limits = new Map<string, {

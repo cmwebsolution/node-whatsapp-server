@@ -181,3 +181,27 @@ docker compose up -d whatsapp
 ```
 
 Never remove an active lock, `applications.json`, or the session profile directories to make startup succeed. Investigate repeated crashes first.
+
+## Hostinger Business / managed Node web apps
+
+Keep the dashboard **Build command** as `npm run build`, **Output directory** as `dist`, and **Entry file** as `dist/server.js`. Use Node 22.12+ and npm. The repository's `.npmrc` includes development dependencies during installation, even with `NODE_ENV=production`. Build compiles TypeScript, installs the compatible browser, and verifies its executable exists. A failed browser download now fails deployment rather than silently leaving the app unable to connect.
+
+For the existing Hostinger account, configure these environment variables in hPanel (available during build and runtime):
+
+```dotenv
+NODE_ENV=production
+HOST=0.0.0.0
+APP_CREDENTIALS_FILE=/home/u276729028/whatsapp-data/applications.json
+SESSION_DIR=/home/u276729028/whatsapp-data/sessions
+PUPPETEER_SKIP_DOWNLOAD=false
+```
+
+Keep the host-provided `PORT` when available; otherwise the service defaults to 3001. The browser cache automatically defaults to `/home/u276729028/whatsapp-data/puppeteer`, beside the credential registry. An explicit `PUPPETEER_CACHE_DIR` overrides this; the same absolute path must be used during build and runtime. Remove a Docker-only `CHROME_PATH=/usr/bin/chromium` if that executable is absent on this host. Do not set `CHROME_NO_SANDBOX` merely to hide an unrelated startup failure.
+
+The existing `applications.json` and private `billingapp.token` were provisioned separately; code deployment does not generate or rotate them. Keep the protected persistent directory outside `public_html` and Hostinger's build/version directories. Never move `hbuilds` into `public_html`. For another hosting account, replace the `/home/u276729028/` portion with its real private writable directory.
+
+Redeploy from GitHub after changing settings. Visiting `/` returns a service identification response; `/health` checks the process and `/ready` checks service readiness. Neither proves that Chrome can run. Click Connect once in Laravel, explicitly request a QR, scan it, verify `connected`, then send a consenting recipient a test text. After a controlled restart, verify the linked account restores without re-scanning. Inspect runtime logs for safe diagnostic codes if startup fails.
+
+Browser download does not install Linux shared libraries or grant sandbox permissions. If logs show `CHROME_DEPENDENCIES` or `CHROME_SANDBOX`, Hostinger must provide compatible libraries/permissions. When the hosting plan cannot supply them, use the supplied Docker deployment on a VPS or compatible container host. Run exactly one session-owning process against the storage directory.
+
+Docker and CI deliberately set `PUPPETEER_SKIP_DOWNLOAD=true`; Docker's runtime separately installs system Chromium. Explicit `CHROME_PATH` is supported for an already installed browser. The build's opt-out does not weaken runtime readiness checks.

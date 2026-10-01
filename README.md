@@ -6,7 +6,7 @@ A standalone Node.js service that lets independent Laravel applications link eac
 
 ## Does a build give me a URL?
 
-No. `npm run build` compiles TypeScript into `dist/`. `npm start` runs the HTTP process. Hosting, DNS, and an HTTPS reverse proxy provide the public URL.
+No. `npm run build` compiles TypeScript into `dist/` and installs/verifies the browser needed for managed web-app deployments. `npm start` runs the HTTP process. Hosting, DNS, and an HTTPS reverse proxy provide the public URL.
 
 | Location | Example URL | Port |
 | --- | --- | --- |
@@ -15,6 +15,12 @@ No. `npm run build` compiles TypeScript into `dist/`. `npm start` runs the HTTP 
 | Containers on the same private network | `http://whatsapp:3001` | Container: 3001 |
 
 `whatsapp.yourdomain.com` is an example; choose a domain you own. The GitHub repository URL is source code, not the running API URL. You do not add `/api/whatsapp` to Laravel's `WHATSAPP_NODE_URL`.
+
+## Hostinger web-app deployment
+
+Use the dashboard build command **`npm run build`**, output directory **`dist`**, and entry file **`dist/server.js`**. Build installs the compatible Chrome browser automatically. TypeScript build dependencies are included by default. Browser cache is shared by build/runtime and defaults to a `puppeteer` directory beside `APP_CREDENTIALS_FILE`.
+
+Set credentials and sessions to private persistent absolute paths outside `public_html`, and keep `PUPPETEER_SKIP_DOWNLOAD=false`. Existing tokens stay unchanged. See [the Hostinger setup section](docs/production.md#hostinger-business--managed-node-web-apps) for exact values and verification. Chrome execution still requires the host's Linux libraries and permissions; the Docker/VPS setup supplies the system dependencies.
 
 ## Local development
 

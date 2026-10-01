@@ -1,3 +1,4 @@
+import './browser-cache.js';
 import whatsapp from 'whatsapp-web.js';
 import { EventEmitter } from 'node:events';
 import type { Driver } from './service.js';

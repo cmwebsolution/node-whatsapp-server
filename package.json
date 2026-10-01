@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node --env-file-if-exists=.env scripts/install-browser.mjs",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "test": "tsc -p tsconfig.test.json && node --test .test-build/tests/*.test.js",
     "provision": "tsx --env-file=.env src/provision.ts",

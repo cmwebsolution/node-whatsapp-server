@@ -71,3 +71,13 @@ test('compiled provisioning and server run without .env and preserve safe startu
         await rm(root, { recursive: true, force: true });
     }
 });
+
+test('root endpoint identifies the service without disclosing session or credential data', async () => {
+    const { createApp } = await import('../src/app.js');
+    const { Sessions } = await import('../src/service.js');
+    const { default: request } = await import('supertest');
+    const app = createApp(new Sessions('/unused', () => { throw new Error('No browser needed for root'); }), {});
+    const response = await request(app).get('/').expect(200);
+    assert.deepEqual(response.body, { success: true, service: 'WhatsApp service', health: '/health', ready: '/ready' });
+    assert.equal(response.headers['cache-control'], 'no-store');
+});
