@@ -19,7 +19,7 @@ Prerequisites: a Linux server with persistent storage, Docker Engine and its Com
 ### 1. Fetch the code
 
 ```sh
-git clone https://github.com/cmwebsolution/node-whatsapp-server.git
+git clone https://github.com/devclick-technology/node-whatsapp-server.git
 cd node-whatsapp-server
 cp .env.example .env
 ```
