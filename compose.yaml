@@ -1,0 +1,23 @@
+services:
+  whatsapp:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      MAX_SESSIONS: ${MAX_SESSIONS:-20}
+      SESSION_DIR: /app/data/sessions
+      APP_CREDENTIALS_FILE: /app/data/applications.json
+    ports:
+      - "127.0.0.1:${WHATSAPP_HOST_PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+    shm_size: 1gb
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
