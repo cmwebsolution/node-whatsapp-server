@@ -1,396 +1,418 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
-import request from 'supertest';
-import { Sessions, keyFor, startupDiagnostic, type Driver } from '../src/service.js';
-import { createApp } from '../src/app.js';
-class Fake extends EventEmitter implements Driver {
-    count = 0;
-    live = true;
-    fail = false;
-    async initialize() {
-    }
-    async destroy() {
-        this.live = false;
-    }
-    async logout() {
-    }
-    phone() {
-        return '919876543210';
-    }
-    async ready() {
-        return this.live;
-    }
-    async sendMedia() { return this.send(); }
-    async send() {
-        this.count++;
-        if (this.fail) {
-            throw new Error('secret exception');
-        }
-        return 'accepted';
-    }
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createApp } from "../src/app.js";
+import { Sessions, type DriverEvent } from "../src/service.js";
+import { MemoryStore } from "./fakes.js";
+const payload = {
+  kind: "text" as const,
+  phone: "919876543210",
+  message: "Hello",
+};
+async function setup(ms = 1000) {
+  const store = new MemoryStore();
+  let sends = 0,
+    closes = 0;
+  const events = new Map<string, (e: DriverEvent) => void>();
+  let send: () => Promise<string | null> = async () => {
+    sends++;
+    return "message-1";
+  };
+  const sessions = new Sessions(
+    store,
+    async (_store, l, event) => {
+      events.set(l.id, event);
+      return {
+        send: () => send(),
+        close: async () => {
+          closes++;
+        },
+        logout: async () => {},
+      };
+    },
+    500,
+    ms,
+  );
+  await sessions.connect("a", "user");
+  await new Promise((r) => setTimeout(r, 5));
+  [...events.values()][0]({ kind: "open", phone: payload.phone });
+  await new Promise((r) => setTimeout(r, 5));
+  const app = createApp(sessions, {
+    a: createHash("sha256").update("token").digest("hex"),
+  });
+  return {
+    store,
+    sessions,
+    app,
+    get sends() {
+      return sends;
+    },
+    get closes() {
+      return closes;
+    },
+    setSend: (f: typeof send) => {
+      send = f;
+    },
+    events,
+    close: async () => {
+      await sessions.shutdown();
+      await app.close();
+    },
+  };
 }
-async function setup(ttl = 20000) {
-    const root = await mkdtemp(join(tmpdir(), 'wa-test-'));
-    const clients: Fake[] = [];
-    const sessions = new Sessions(root, () => {
-        const c = new Fake();
-        clients.push(c);
-        return c;
-    }, ttl);
-    const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-    const app = createApp(sessions, { a: hash('token-a'), b: hash('token-b') });
-    const api = (tenant = 'a', token = `token-${tenant}`) => ({ post: (url: string) => request(app).post(url).set('Authorization', `Bearer ${token}`).set('X-WhatsApp-App-Id', tenant), get: (url: string) => request(app).get(url).set('Authorization', `Bearer ${token}`).set('X-WhatsApp-App-Id', tenant) });
-    return { root, clients, sessions, api, app };
-}
-test('credentials authorize only their application and responses are not cached', async () => {
-    const x = await setup();
-    assert.equal((await request(x.app).get('/api/whatsapp/u/status')).status, 401);
-    assert.equal((await x.api('b', 'token-a').get('/api/whatsapp/u/status')).status, 403);
-    const r = await x.api().get('/api/whatsapp/u/status');
-    assert.equal(r.headers['cache-control'], 'no-store');
-    assert.equal(r.body.status, 'disconnected');
-    await rm(x.root, { recursive: true });
-});
-test('application and user isolation, concurrent connect and idempotent disconnect', async () => {
-    const x = await setup();
-    await Promise.all(Array.from({ length: 10 }, () => x.sessions.connect('a', '../same')));
-    assert.equal(x.clients.length, 1);
-    x.clients[0].emit('ready');
-    assert.equal((await x.sessions.status('a', '../same')).status, 'connected');
-    assert.equal((await x.sessions.status('b', '../same')).status, 'disconnected');
-    assert.equal((await x.sessions.status('a', 'other')).status, 'disconnected');
-    await x.sessions.connect('b', '../same');
-    assert.equal(x.clients.length, 2);
-    await Promise.all([x.sessions.disconnect('a', '../same'), x.sessions.disconnect('a', '../same')]);
-    assert.equal((await x.sessions.status('b', '../same')).status, 'connecting');
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('restart restoration starts connecting and only ready reports actual phone', async () => {
-    const x = await setup();
-    await mkdir(join(x.root, `session-${keyFor('a', 'u')}`));
-    await x.sessions.restore();
-    assert.equal((await x.sessions.status('a', 'u')).phone, null);
-    x.clients[0].emit('ready');
-    assert.equal((await x.sessions.status('a', 'u')).phone, '919876543210');
-    await x.sessions.shutdown();
-    assert.equal((await x.sessions.status('a', 'u')).status, 'disconnected');
-    await rm(x.root, { recursive: true });
-});
-test('QR expiry refreshes and stale client events cannot revive session', async () => {
-    const x = await setup(100);
-    await x.sessions.connect('a', 'u');
-    x.clients[0].emit('qr', 'test');
-    await new Promise(r => setTimeout(r, 60));
-    const qr = await x.sessions.status('a', 'u', true);
-    assert.match(qr.qr!, /^data:image\/png;base64,/);
-    assert.ok(qr.qr!.length < 1048576);
-    await new Promise(r => setTimeout(r, 100));
-    await assert.rejects(x.sessions.status('a', 'u', true), { code: 'QR_EXPIRED' });
-    assert.equal(x.clients.length, 2);
-    x.clients[0].emit('ready');
-    assert.equal((await x.sessions.status('a', 'u')).status, 'connecting');
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('validation, send readiness and uncertain submission has no retry or leaked exception', async () => {
-    const x = await setup();
-    const endpoint = '/api/whatsapp/u/send-message';
-    for (const body of [{ phone: '01234567', message: 'ok' }, { phone: '919876543210', message: ' ' }, { phone: '919876543210', message: 'a'.repeat(4097) }]) {
-        assert.equal((await x.api().post(endpoint).send(body)).status, 422);
-    }
-    const body = { phone: '919876543210', message: 'Hello' };
-    assert.equal((await x.api().post(endpoint).send(body)).body.code, 'SESSION_DISCONNECTED');
-    await x.sessions.connect('a', 'u');
-    assert.equal((await x.api().post(endpoint).send(body)).body.code, 'NOT_CONNECTED');
-    x.clients[0].emit('ready');
-    x.clients[0].live = false;
-    assert.equal((await x.api().post(endpoint).send(body)).status, 409);
-    x.clients[0].live = true;
-    assert.equal((await x.api().post(endpoint).send(body)).body.message_id, 'accepted');
-    x.clients[0].fail = true;
-    const r = await x.api().post(endpoint).send(body);
-    assert.equal(r.status, 502);
-    assert.equal(r.body.code, 'SEND_FAILED');
-    assert.ok(!JSON.stringify(r.body).includes('secret'));
-    assert.equal(x.clients[0].count, 2);
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('timed out sends retain connection and block concurrent submission until settled', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wa-timeout-'));
-    const client = new Fake();
-    client.send = async () => {
-        client.count++;
-        return new Promise(() => {
-        });
-    };
-    const sessions = new Sessions(root, () => client, 20000, 10, 20, 90000, 20);
-    await sessions.connect('a', 'u');
-    client.emit('ready');
-    await assert.rejects(sessions.send('a', 'u', '919876543210', 'hello'), { code: 'SEND_FAILED' });
-    client.emit('ready');
-    assert.equal((await sessions.status('a', 'u')).status, 'connected');
-    await assert.rejects(sessions.send('a', 'u', '919876543210', 'another'), {code:'SEND_IN_PROGRESS'});
-    assert.equal(client.count, 1);
-    await sessions.shutdown();
-    await rm(root, { recursive: true });
-});
-test('disconnect serializes behind in-flight submission and removes persisted profile', async () => {
-    const x = await setup();
-    await x.sessions.connect('a', 'u');
-    const folder = join(x.root, `session-${keyFor('a', 'u')}`);
-    await mkdir(folder);
-    x.clients[0].emit('ready');
-    let release: (s: string) => void = () => {
-    };
-    x.clients[0].send = () => new Promise(r => {
-        release = r;
+const headers = {
+  authorization: "Bearer token",
+  "x-whatsapp-app-id": "a",
+  "idempotency-key": "intent-1",
+};
+test("authenticated Laravel routes, mandatory key, duplicate replay and payload conflict", async () => {
+  const x = await setup();
+  try {
+    assert.equal(
+      (await x.app.inject({ url: "/api/whatsapp/user/status" })).statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await x.app.inject({
+          url: "/api/whatsapp/user/status",
+          headers: { ...headers, "x-whatsapp-app-id": "b" },
+        })
+      ).statusCode,
+      403,
+    );
+    const sent = await x.app.inject({
+      method: "POST",
+      url: "/api/whatsapp/user/send-message",
+      headers,
+      payload: { phone: payload.phone, message: payload.message },
     });
-    const send = x.sessions.send('a', 'u', '919876543210', 'Hello');
-    await new Promise(r => setTimeout(r, 10));
-    const disconnect = x.sessions.disconnect('a', 'u');
-    release('accepted');
-    assert.equal((await send).message_id, 'accepted');
-    assert.equal((await disconnect).status, 'disconnected');
-    const { access } = await import('node:fs/promises');
-    await assert.rejects(access(folder));
-    await rm(x.root, { recursive: true });
+    assert.equal(sent.statusCode, 200);
+    assert.equal(sent.json().state, "submitted");
+    assert.equal(sent.json().message_id, "message-1");
+    const repeat = await x.app.inject({
+      method: "POST",
+      url: "/api/whatsapp/user/send-message",
+      headers,
+      payload: { message: payload.message, phone: payload.phone },
+    });
+    assert.deepEqual(repeat.json(), sent.json());
+    assert.equal(x.sends, 1);
+    assert.equal(
+      (
+        await x.app.inject({
+          method: "POST",
+          url: "/api/whatsapp/user/send-message",
+          headers,
+          payload: { phone: payload.phone, message: "changed" },
+        })
+      ).statusCode,
+      409,
+    );
+    assert.equal(
+      (
+        await x.app.inject({
+          method: "POST",
+          url: "/api/whatsapp/user/send-message",
+          headers: { authorization: "Bearer token", "x-whatsapp-app-id": "a" },
+          payload: { phone: payload.phone, message: "Hi" },
+        })
+      ).statusCode,
+      422,
+    );
+    const lookup = await x.app.inject({
+      url: "/api/whatsapp/user/submissions/intent-1",
+      headers,
+    });
+    assert.equal(lookup.json().state, "submitted");
+    assert.equal(lookup.headers["cache-control"], "no-store");
+  } finally {
+    await x.close();
+  }
 });
-test('opaque URL user IDs, all four tenant/user combinations and invalid bodies', async () => {
-    const x = await setup();
-    for (const app of ['a', 'b']) {
-        for (const id of ['same', '../opaque:☃']) {
-            assert.equal((await x.api(app).post('/api/whatsapp/connect').send({ user_id: id })).status, 200);
-            x.clients.at(-1)!.emit('ready');
-        }
+test("concurrent account sends serialize and duplicate observes pending", async () => {
+  const x = await setup();
+  let resolve!: (value: string) => void;
+  x.setSend(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  try {
+    const pending = x.sessions.send("a", "user", "one", payload);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(
+      (await x.sessions.send("a", "user", "one", payload)).state,
+      "pending",
+    );
+    await assert.rejects(x.sessions.send("a", "user", "two", payload), {
+      code: "SEND_IN_PROGRESS",
+    });
+    resolve("id");
+    assert.equal((await pending).state, "submitted");
+  } finally {
+    await x.close();
+  }
+});
+test("timeout becomes unknown, closes socket, and survives restart without redispatch", async () => {
+  const x = await setup(20);
+  x.setSend(() => new Promise(() => {}));
+  try {
+    assert.equal(
+      (await x.sessions.send("a", "user", "one", payload)).state,
+      "unknown",
+    );
+    assert.ok(x.closes > 0);
+    const other = new Sessions(x.store, async () => {
+      throw new Error("must not create socket");
+    });
+    assert.equal(
+      (await other.send("a", "user", "one", payload)).state,
+      "unknown",
+    );
+    await other.shutdown();
+  } finally {
+    await x.close();
+  }
+});
+test("database failure rejects before dispatch and readiness fails safely", async () => {
+  const x = await setup();
+  try {
+    x.store.fail = true;
+    await assert.rejects(x.sessions.send("a", "user", "one", payload));
+    assert.equal(x.sends, 0);
+    assert.equal((await x.app.inject({ url: "/ready" })).statusCode, 503);
+  } finally {
+    x.store.fail = false;
+    await x.close();
+  }
+});
+test("logout clears auth and app/user identities remain isolated", async () => {
+  const x = await setup();
+  try {
+    assert.equal((await x.sessions.status("b", "user")).status, "disconnected");
+    assert.equal(
+      (await x.sessions.status("a", "other")).status,
+      "disconnected",
+    );
+    await x.sessions.disconnect("a", "user");
+    assert.equal((await x.sessions.status("a", "user")).status, "disconnected");
+    assert.deepEqual(await x.store.restore(), []);
+  } finally {
+    await x.close();
+  }
+});
+test("PDF/PNG supported; malformed JSON and invalid media rejected", async () => {
+  const x = await setup();
+  try {
+    for (const [mimetype, filename, data] of [
+      ["application/pdf", "bill.pdf", Buffer.from("%PDF-1.4\n%%EOF")],
+      [
+        "image/png",
+        "image.png",
+        Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      ],
+    ]) {
+      const response = await x.app.inject({
+        method: "POST",
+        url: "/api/whatsapp/user/send-media",
+        headers: {
+          ...headers,
+          "idempotency-key": String(filename).replace(".", "-"),
+        },
+        payload: {
+          phone: payload.phone,
+          media: {
+            mimetype,
+            filename,
+            data: (data as Buffer).toString("base64"),
+            caption: "",
+          },
+        },
+      });
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.json().state, "submitted");
     }
-    assert.equal(x.clients.length, 4);
-    await x.api('a').post(`/api/whatsapp/${encodeURIComponent('../opaque:☃')}/disconnect`);
-    for (const [app, id] of [['a', 'same'], ['b', 'same'], ['b', '../opaque:☃']]) {
-        assert.equal((await x.api(app).get(`/api/whatsapp/${encodeURIComponent(id)}/status`)).body.status, 'connected');
+    assert.equal(
+      (
+        await x.app.inject({
+          method: "POST",
+          url: "/api/whatsapp/user/send-message",
+          headers: { ...headers, "content-type": "application/json" },
+          payload: "{",
+        })
+      ).statusCode,
+      422,
+    );
+  } finally {
+    await x.close();
+  }
+});
+
+test("QR lifetime, reconnect transitions and late events cannot revive a logged-out socket", async () => {
+  const x = await setup();
+  try {
+    const event = [...x.events.values()][0];
+    event({ kind: "qr", qr: "private-pairing-payload" });
+    for (
+      let i = 0;
+      i < 40 && (await x.sessions.status("a", "user")).status !== "qr_required";
+      i++
+    )
+      await new Promise((r) => setTimeout(r, 5));
+    const qr = await x.sessions.status("a", "user", true);
+    assert.equal(qr.status, "qr_required");
+    assert.ok(qr.qr?.startsWith("data:image/png;base64,"));
+    assert.ok(Date.parse(qr.expires_at!) > Date.now());
+    event({ kind: "open", phone: payload.phone });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await x.sessions.status("a", "user", true)).qr, null);
+    event({ kind: "close", loggedOut: false });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await x.sessions.status("a", "user")).status, "connecting");
+    await x.sessions.disconnect("a", "user");
+    event({ kind: "open", phone: payload.phone });
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await x.sessions.status("a", "user")).status, "disconnected");
+  } finally {
+    await x.close();
+  }
+});
+test("canonical media field order and extra properties do not change submission hash", async () => {
+  const x = await setup();
+  try {
+    const media = {
+      mimetype: "application/pdf",
+      data: Buffer.from("%PDF-1.4").toString("base64"),
+      filename: "bill.pdf",
+      caption: "",
+    };
+    const first = await x.app.inject({
+      method: "POST",
+      url: "/api/whatsapp/user/send-media",
+      headers,
+      payload: { phone: payload.phone, media },
+    });
+    const second = await x.app.inject({
+      method: "POST",
+      url: "/api/whatsapp/user/send-media",
+      headers,
+      payload: {
+        phone: payload.phone,
+        media: {
+          caption: "",
+          filename: media.filename,
+          data: media.data,
+          mimetype: media.mimetype,
+          ignored: "x",
+        },
+      },
+    });
+    assert.equal(first.statusCode, 200);
+    assert.deepEqual(second.json(), first.json());
+    assert.equal(x.sends, 1);
+  } finally {
+    await x.close();
+  }
+});
+test("database failure after dispatch is unknown, never a safe-to-retry failure", async () => {
+  const x = await setup();
+  x.setSend(async () => {
+    x.store.fail = true;
+    return "accepted";
+  });
+  try {
+    assert.equal(
+      (await x.sessions.send("a", "user", "one", payload)).state,
+      "unknown",
+    );
+  } finally {
+    x.store.fail = false;
+    await x.close();
+  }
+});
+
+test("overall submission deadline includes a stalled reservation and forbids late dispatch", async () => {
+  const x = await setup(20);
+  const reserve = x.store.reserve.bind(x.store);
+  let release!: () => void;
+  x.store.reserve = async (...args) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return reserve(...args);
+  };
+  try {
+    await assert.rejects(
+      x.sessions.send("a", "user", "slow-storage", payload),
+      { code: "SERVICE_UNAVAILABLE" },
+    );
+    assert.equal(x.sends, 0);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(x.sends, 0);
+    assert.equal(
+      (await x.sessions.lookup("a", "user", "slow-storage")).state,
+      "unknown",
+    );
+  } finally {
+    await x.close();
+  }
+});
+
+test("global execution capacity rejects immediately with retry metadata and no ledger reservation", async () => {
+  const x = await setup();
+  let release!: () => void;
+  const held = new Promise<string>((r) => {
+    release = () => r("accepted");
+  });
+  x.setSend(() => held);
+  try {
+    for (let i = 1; i < 50; i++) {
+      await x.sessions.connect("a", "capacity-" + i);
+      await new Promise((r) => setTimeout(r, 1));
+      [...x.events.values()].at(-1)!({ kind: "open", phone: payload.phone });
     }
-    for (const id of [123, '', 'a'.repeat(257)]) {
-        assert.equal((await x.api().post('/api/whatsapp/connect').send({ user_id: id })).status, 422);
+    await new Promise((r) => setTimeout(r, 5));
+    const results: any[] = [];
+    const requests = Array.from({ length: 50 }, (_, i) =>
+      x.app
+        .inject({
+          method: "POST",
+          url: `/api/whatsapp/${i === 0 ? "user" : "capacity-" + i}/send-message`,
+          headers: { ...headers, "idempotency-key": "capacity-intent" },
+          payload: { phone: payload.phone, message: payload.message },
+        })
+        .then((r) => {
+          results.push(r);
+          return r;
+        }),
+    );
+    const deadline = Date.now() + 1000;
+    while (results.length < 40 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 5));
+    assert.equal(
+      results.length,
+      40,
+      "Capacity errors must complete while the ten sends remain blocked",
+    );
+    for (const r of results) {
+      assert.equal(r.statusCode, 503);
+      assert.equal(r.json().code, "CAPACITY_EXCEEDED");
+      assert.equal(r.json().retry_safe, true);
+      assert.equal(r.headers["retry-after"], "2");
     }
-    assert.equal((await x.api().post('/api/whatsapp/connect').set('Content-Type', 'application/json').send('{bad')).status, 422);
-    assert.equal((await x.api().post('/api/whatsapp/connect').send({ user_id: 'a'.repeat(25000) })).status, 422);
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('credential provisioner persists only digests and refuses duplicate app IDs', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wa-registry-'));
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const run = promisify(execFile);
-    const path = join(root, 'registry.json');
-    const command = new URL('../src/provision.js', import.meta.url);
-    const options = { env: { ...process.env, APP_CREDENTIALS_FILE: path } };
-    const first = await run(process.execPath, [command.pathname, 'transport'], options);
-    assert.ok(!first.stdout.includes('Bearer token'));
-    const token = (await (await import('node:fs/promises')).readFile(join(root, 'credentials', 'transport.token'), 'utf8')).trim();
-    assert.ok(!first.stdout.includes(token));
-    const { readFile, stat } = await import('node:fs/promises');
-    const saved = await readFile(path, 'utf8');
-    assert.ok(!saved.includes(token));
-    assert.equal(JSON.parse(saved).transport, createHash('sha256').update(token).digest('hex'));
-    assert.equal((await stat(path)).mode & 0o777, 0o600);
-    await assert.rejects(run(process.execPath, [command.pathname, 'transport'], options));
-    await rm(root, { recursive: true });
-});
-
-test('media submissions enforce tenant ownership, readiness and no retry on uncertain failure', async () => {
-    const x = await setup();
-    const endpoint = '/api/whatsapp/u/send-media';
-    const media = { mimetype: 'application/pdf', data: Buffer.from('%PDF-1.7\nattachment').toString('base64'), filename: 'bill.pdf', caption: 'Bill' };
-    const body = { phone: '919876543210', media };
-    assert.equal((await x.api('b', 'token-a').post(endpoint).send(body)).status, 403);
-    assert.equal((await x.api().post(endpoint).send(body)).body.code, 'SESSION_DISCONNECTED');
-    await x.sessions.connect('a', 'u');
-    assert.equal((await x.api().post(endpoint).send(body)).body.code, 'NOT_CONNECTED');
-    x.clients[0].emit('ready');
-    assert.equal((await x.api('b').post(endpoint).send(body)).body.code, 'SESSION_DISCONNECTED');
-    assert.equal((await x.api().post('/api/whatsapp/other/send-media').send(body)).body.code, 'SESSION_DISCONNECTED');
-    const accepted = await x.api().post(endpoint).send(body);
-    assert.equal(accepted.status, 200);
-    assert.equal(accepted.body.message_id, 'accepted');
-    assert.equal(accepted.headers['cache-control'], 'no-store');
-    x.clients[0].fail = true;
-    const failed = await x.api().post(endpoint).send(body);
-    assert.equal(failed.status, 502);
-    assert.equal(failed.body.code, 'SEND_FAILED');
-    assert.ok(!JSON.stringify(failed.body).includes('secret exception'));
-    assert.equal(x.clients[0].count, 2);
-    assert.equal((await x.sessions.status('a','u')).status, 'connected');
-    x.clients[0].fail = false;
-    assert.equal((await x.api().post(endpoint).send(body)).body.message_id, 'accepted');
-    assert.equal(x.clients[0].count, 3);
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('media validates type, filename, canonical encoding and bounded content before sending', async () => {
-    const x = await setup();
-    const endpoint = '/api/whatsapp/u/send-media';
-    const pdf = { mimetype: 'application/pdf', data: Buffer.from('%PDF-1.7\nattachment').toString('base64'), filename: 'bill.pdf', caption: 'Bill' };
-    for (const media of [null, {...pdf, filename:'../bill.pdf'}, {...pdf, data:'invalid'}, {...pdf, data:Buffer.from('private').toString('base64')}, {...pdf, caption:'a'.repeat(1025)}, {...pdf, mimetype:'image/png'}, {...pdf, data:Buffer.alloc(8*1024*1024+1).toString('base64')}]) {
-        assert.equal((await x.api().post(endpoint).send({phone:'919876543210', media})).status, 422);
-    }
-    const png = { mimetype:'image/png', filename:'bill.png', caption:'Bill', data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' };
-    await x.sessions.connect('a','u');
-    x.clients[0].emit('ready');
-    assert.equal((await x.api().post(endpoint).send({phone:'919876543210',media:png})).status,200);
-    const huge = Buffer.from(png.data,'base64');
-    huge.writeUInt32BE(20000,16);
-    huge.writeUInt32BE(20000,20);
-    assert.equal((await x.api().post(endpoint).send({phone:'919876543210',media:{...png,data:huge.toString('base64')}})).status,422);
-    assert.equal(x.clients[0].count,1);
-    await x.sessions.shutdown();
-    await rm(x.root,{recursive:true});
-});
-
-test('status recovers a temporarily unready client without needing another ready event', async () => {
-    const x = await setup();
-    await x.sessions.connect('a', 'u');
-    x.clients[0].emit('ready');
-    x.clients[0].live = false;
-    assert.equal((await x.sessions.status('a', 'u')).status, 'connecting');
-    x.clients[0].live = true;
-    const restored = await x.sessions.status('a', 'u');
-    assert.equal(restored.status, 'connected');
-    assert.equal(restored.phone, '919876543210');
-    assert.equal(x.clients.length, 1);
-    await x.sessions.shutdown();
-    await rm(x.root, { recursive: true });
-});
-test('stalled startup retries once then disconnects without deleting saved credentials', async () => {
-    const root = await mkdtemp(join(tmpdir(),'wa-stuck-'));
-    const client = new Fake(); client.live = false;
-    const sessions = new Sessions(root, () => client, 20000, 100, 15000, 10);
-    await mkdir(join(root,`session-${keyFor('a','u')}`));
-    await sessions.connect('a','u');
-    await new Promise(resolve => setTimeout(resolve,20));
-    assert.equal((await sessions.status('a','u')).status,'connecting');
-    await new Promise(resolve=>setTimeout(resolve,20));
-    const result = await sessions.status('a','u');
-    assert.equal(result.status,'disconnected');
-    assert.equal(result.phone,null);
-    const {readdir} = await import('node:fs/promises');
-    assert.ok((await readdir(root)).includes(`session-${keyFor('a','u')}`));
-    await sessions.shutdown();
-    await rm(root,{recursive:true});
-});
-
-test('late acceptance clears only the submission guard and never sends again automatically', async () => {
-    const root = await mkdtemp(join(tmpdir(),'wa-late-'));
-    const client = new Fake();
-    let accept!: (id: string) => void;
-    client.send = async () => { client.count++; return new Promise<string>(resolve => { accept = resolve; }); };
-    const sessions = new Sessions(root,()=>client,20000,10,20,90000,20);
-    await sessions.connect('a','u'); client.emit('ready');
-    await assert.rejects(sessions.send('a','u','919876543210','first'),{code:'SEND_FAILED'});
-    assert.equal((await sessions.status('a','u')).status,'connected');
-    accept('late-accepted'); await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(client.count,1);
-    client.send = async () => {client.count++; return 'next-accepted';};
-    assert.equal((await sessions.send('a','u','919876543210','distinct')).message_id,'next-accepted');
-    client.emit('disconnected');
-    assert.equal((await sessions.status('a','u')).status,'disconnected');
-    await sessions.shutdown(); await rm(root,{recursive:true});
-});
-
-test('concurrent HTTP submissions are rejected immediately rather than queued for a late second send', async () => {
-    const x=await setup(); await x.sessions.connect('a','u'); x.clients[0].emit('ready');
-    let finish!: (id:string)=>void;
-    x.clients[0].send = async ()=>{x.clients[0].count++; return new Promise<string>(resolve=>{finish=resolve;});};
-    const first=x.sessions.send('a','u','919876543210','first');
-    await new Promise(resolve=>setImmediate(resolve));
-    await assert.rejects(x.sessions.send('a','u','919876543210','second'),{code:'SEND_IN_PROGRESS'});
-    assert.equal(x.clients[0].count,1); finish('accepted'); await first;
-    await x.sessions.shutdown(); await rm(x.root,{recursive:true});
-});
-
-test('repeated authentication neither demotes connected state nor extends a stalled startup forever',async()=>{
-    const root=await mkdtemp(join(tmpdir(),'wa-auth-'));const clients:Fake[]=[];
-    const sessions=new Sessions(root,()=>{const c=new Fake();c.live=false;clients.push(c);return c;},20000,10,20,10);
-    await sessions.connect('a','u');
-    await new Promise(resolve=>setTimeout(resolve,20));clients[0].emit('authenticated');
-    assert.equal((await sessions.status('a','u')).status,'connecting');assert.equal(clients.length,2);
-    clients[1].live=true;clients[1].emit('ready');clients[1].emit('authenticated');
-    assert.equal((await sessions.status('a','u')).status,'connected');
-    await sessions.shutdown();await rm(root,{recursive:true});
-});
-
-test('failed initialization recovers once with a fresh client and ignores retired client events',async()=>{
-    const root=await mkdtemp(join(tmpdir(),'wa-init-'));const clients:Fake[]=[];
-    const sessions=new Sessions(root,()=>{const c=new Fake();if(!clients.length)c.initialize=async()=>{throw new Error('private startup detail');};clients.push(c);return c;});
-    await sessions.connect('a','u');
-    await new Promise(resolve=>setTimeout(resolve,20));
-    assert.equal(clients.length,2);
-    clients[0].emit('ready');assert.equal((await sessions.status('a','u')).status,'connecting');
-    clients[1].emit('ready');assert.equal((await sessions.status('a','u')).status,'connected');
-    await sessions.shutdown();await rm(root,{recursive:true});
-});
-
-test('completed client send without an ID succeeds with explicit confirmation metadata and retains connection',async()=>{
-    const root=await mkdtemp(join(tmpdir(),'wa-no-id-'));
-    const client=new Fake() as Driver;
-    client.send=async()=>null;
-    const sessions=new Sessions(root,()=>client);
-    await sessions.connect('a','u');client.emit('ready');
-    assert.deepEqual(await sessions.send('a','u','919876543210','sample'),{success:true,message_id:null,confirmation:'client_completed'});
-    assert.equal((await sessions.status('a','u')).status,'connected');
-    await sessions.shutdown();await rm(root,{recursive:true});
-});
-
-
-test('startup diagnostics identify host failures without exposing exception details', () => {
-    assert.equal(startupDiagnostic(new Error('Could not find Chrome: private/path secret')).code, 'CHROME_MISSING');
-    assert.equal(startupDiagnostic(new Error('error while loading shared libraries: libnss3.so')).code, 'CHROME_DEPENDENCIES');
-    assert.equal(startupDiagnostic(new Error('ProcessSingleton profile in use')).code, 'PROFILE_IN_USE');
-    assert.ok(!JSON.stringify(startupDiagnostic(new Error('token-secret private startup detail'))).includes('token-secret'));
-});
-
-test('waiting for QR scanning does not consume the browser startup timeout', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wa-qr-startup-'));
-    const clients: Fake[] = [];
-    let finish!: () => void;
-    const sessions = new Sessions(root, () => {
-        const c = new Fake();
-        c.initialize = () => new Promise<void>(resolve => { finish = resolve; });
-        clients.push(c);
-        return c;
-    }, 20000, 10, 15000, 100);
-    await sessions.connect('a', 'u');
-    await new Promise(resolve => setTimeout(resolve, 10));
-    clients[0].emit('qr', 'private-qr');
-    await new Promise(resolve => setTimeout(resolve, 180));
-    assert.equal((await sessions.status('a', 'u', true)).status, 'qr_required');
-    assert.equal(clients.length, 1);
-    finish();
-    await sessions.shutdown();
-    await rm(root, { recursive: true });
-});
-
-test('failed browser startup exposes a safe reason in status and runtime diagnostics', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wa-failed-startup-'));
-    const entries: unknown[] = [];
-    const sessions = new Sessions(root, () => {
-        const client = new Fake();
-        client.initialize = async () => { throw new Error('Could not find Chrome secret-token'); };
-        return client;
-    }, 20000, 10, 15000, 90000, 30000, entry => entries.push(entry));
-    await sessions.connect('a', 'u');
-    await new Promise(resolve => setTimeout(resolve, 30));
-    const result = await sessions.status('a', 'u');
-    assert.equal(result.status, 'disconnected');
-    assert.equal(result.last_error?.code, 'CHROME_MISSING');
-    assert.equal(entries.length, 2);
-    assert.ok(!JSON.stringify(entries).includes('secret-token'));
-    await sessions.shutdown();
-    await rm(root, { recursive: true });
+    assert.equal(x.store.submissions.size, 10);
+    assert.equal(x.store.slots, 10);
+    release();
+    const finished = await Promise.all(requests);
+    assert.equal(finished.filter((r) => r.statusCode === 200).length, 10);
+  } finally {
+    release?.();
+    await x.close();
+  }
 });

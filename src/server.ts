@@ -1,63 +1,74 @@
-import { resolve } from 'node:path';
-import { createApp } from './app.js';
-import { acquireStorageLock, loadCredentials, StartupError } from './startup.js';
-import { Sessions } from './service.js';
-import { driver } from './driver.js';
-async function main(): Promise<void> {
-    process.umask(0o077);
-    const root = resolve(process.env.SESSION_DIR ?? './data/sessions');
-    const credentialsPath = process.env.APP_CREDENTIALS_FILE ?? './data/applications.json';
-    const credentials = await loadCredentials(credentialsPath);
-    const maxSessions = Number(process.env.MAX_SESSIONS ?? 20);
-    const port = Number(process.env.PORT ?? 3001);
-    if (!Number.isInteger(maxSessions) || maxSessions < 1 || maxSessions > 100 || !Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new StartupError('INVALID_CONFIGURATION', 'PORT must be 1–65535 and MAX_SESSIONS must be 1–100.');
-    }
-    const releaseLock = await acquireStorageLock(root);
-    const sessions = new Sessions(root, key => driver(key, root), 20000, maxSessions);
-    try {
-        await sessions.restore();
-    }
-    catch {
-        await sessions.shutdown().catch(() => {
-        });
-        await releaseLock();
-        throw new StartupError('RESTORATION_UNAVAILABLE', 'Persisted sessions could not be restored. Check available capacity and protected storage.');
-    }
-    const host = process.env.HOST ?? '127.0.0.1';
-    const server = createApp(sessions, credentials).listen(port, host, () => console.log(`WhatsApp service listening on http://${host}:${port}`));
-    server.requestTimeout = 30000;
-    server.headersTimeout = 10000;
-    server.timeout = 45000;
-    server.maxConnections = 200;
-    server.on('error', () => {
-        console.error('HTTP listener unavailable.');
-        void shutdown(1);
-    });
-    let exiting = false;
-    async function shutdown(exitCode = 0): Promise<void> {
-        if (exiting) {
-            return;
-        }
-        exiting = true;
-        sessions.stopping = true;
-        server.close();
-        const deadline = setTimeout(() => process.exit(1), 30000);
-        deadline.unref();
-        try {
-            await sessions.shutdown();
-        }
-        catch {
-            console.error('Graceful session shutdown incomplete.');
-            process.exit(1);
-        }
-        await releaseLock();
-        process.exit(exitCode);
-    }
-    process.on('SIGTERM', () => void shutdown());
-    process.on('SIGINT', () => void shutdown());
+import { loadSecretFiles } from "./secrets.js";
+import { runtimeSettings } from "./settings.js";
+import { signingKeysFromEnvironment } from "./events.js";
+import { createApp } from "./app.js";
+import { driver } from "./driver.js";
+import { Sessions } from "./service.js";
+import { poolFromEnvironment, SqlStore } from "./store.js";
+import { startMetrics } from "./metrics.js";
+import { Vault } from "./crypto.js";
+await loadSecretFiles();
+const tuning = runtimeSettings();
+const max = tuning.maxSessions,
+  port = Number(process.env.PORT ?? 3001);
+if (
+  !Number.isInteger(max) ||
+  max < 1 ||
+  max > 500 ||
+  !Number.isInteger(port) ||
+  port < 1 ||
+  port > 65535
+)
+  throw new Error("Invalid runtime limits");
+const store = new SqlStore(poolFromEnvironment(), Vault.environment());
+const sessions = new Sessions(store, driver, max, 30000, tuning);
+let app: ReturnType<typeof createApp> | undefined;
+let closing = false;
+let stopMetrics: (() => void) | undefined;
+async function shutdown() {
+  if (closing) return;
+  closing = true;
+  stopMetrics?.();
+  const timer = setTimeout(() => process.exit(1), tuning.shutdownMs);
+  timer.unref();
+  try {
+    await sessions.shutdown();
+    await app?.close();
+    await store.close();
+  } finally {
+    clearTimeout(timer);
+  }
 }
-void main().catch((error: unknown) => {
-    console.error(error instanceof StartupError ? `[${error.code}] ${error.message}` : "Service startup failed. Check configuration and protected storage.");
-    process.exit(1);
+process.on("SIGTERM", () => {
+  void shutdown();
 });
+process.on("SIGINT", () => {
+  void shutdown();
+});
+try {
+  await store.ready();
+  const credentials = await store.credentials();
+  if (!Object.keys(credentials).length)
+    throw new Error("No applications provisioned");
+  const signing = signingKeysFromEnvironment();
+  if (Object.keys(credentials).some((id) => !signing[id]))
+    throw new Error("Configure every application signing key");
+  app = createApp(sessions, credentials, signing, tuning.mediaRequests);
+  await app.listen({ port, host: process.env.HOST ?? "127.0.0.1" });
+  stopMetrics = startMetrics(async () => ({
+    ...sessions.snapshot(),
+    ...app!.operatingMetrics(),
+    database: await store.metrics(),
+  }));
+  sessions.startMaintenance();
+  void sessions.restore().catch(() => {
+    console.error("RESTORATION_UNAVAILABLE");
+  });
+  console.log("WhatsApp service listening.");
+} catch {
+  console.error(
+    "STARTUP_UNAVAILABLE: verify database, migrations, application credentials, encryption and signing configuration.",
+  );
+  await shutdown();
+  process.exitCode = 1;
+}

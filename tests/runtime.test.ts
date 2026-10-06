@@ -1,83 +1,83 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, access, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:net';
-import { createHash } from 'node:crypto';
-import { once } from 'node:events';
-
-async function unusedPort(): Promise<number> {
-    const server = createServer();
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
-    assert.ok(address && typeof address !== 'string');
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    return port;
-}
-
-test('compiled provisioning and server run without .env and preserve safe startup/shutdown', { timeout: 15000 }, async () => {
-    const root = await mkdtemp(join(tmpdir(), 'wa-runtime-'));
-    const registry = join(root, 'applications.json');
-    const sessions = join(root, 'sessions');
-    const env = { ...process.env, APP_CREDENTIALS_FILE: registry, SESSION_DIR: sessions, HOST: '127.0.0.1', MAX_SESSIONS: '2' };
-    let child: ReturnType<typeof spawn> | undefined;
-    let stopped: Promise<unknown> | undefined;
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { randomBytes, createHash } from "node:crypto";
+import { poolFromEnvironment } from "../src/store.js";
+import { migrate } from "../src/schema.js";
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+test(
+  "real HTTP process starts on Node 24, restarts and handles SIGTERM without leaking secrets",
+  { skip: process.env.RUN_DATABASE_TESTS !== "1" },
+  async () => {
+    const pool = poolFromEnvironment();
+    await migrate(pool);
+    const token = randomBytes(32).toString("base64url"),
+      app = "runtime-test",
+      key = randomBytes(32).toString("base64");
+    await pool.query(
+      "INSERT INTO wa_applications (app_id,token_hash) VALUES (?,?)",
+      [app, createHash("sha256").update(token).digest("hex")],
+    );
+    const children: ReturnType<typeof spawn>[] = [];
+    let output = "";
     try {
-        const provision = spawnSync(process.execPath, ['--env-file-if-exists=.env', fileURLToPath(new URL('../src/provision.js', import.meta.url)), 'release-test'], { cwd: root, env, encoding: 'utf8' });
-        assert.equal(provision.status, 0, provision.stderr);
-        const token = (await readFile(join(root, 'credentials', 'release-test.token'), 'utf8')).trim();
-        assert.ok(!provision.stdout.includes(token));
-        assert.ok(!provision.stderr.includes(token));
-        const credentials = JSON.parse(await readFile(registry, 'utf8'));
-        assert.equal(credentials['release-test'], createHash('sha256').update(token).digest('hex'));
-
-        const port = await unusedPort();
-        child = spawn(process.execPath, ['--env-file-if-exists=.env', fileURLToPath(new URL('../src/server.js', import.meta.url))], { cwd: root, env: { ...env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
-        stopped = once(child, 'exit');
-        let output = '';
-        child.stdout?.on('data', chunk => { output += chunk.toString(); });
-        child.stderr?.on('data', chunk => { output += chunk.toString(); });
-        const base = `http://127.0.0.1:${port}`;
-        let started = false;
-        for (let attempt = 0; attempt < 100; attempt++) {
-            assert.equal(child.exitCode, null, output);
-            try {
-                const response = await fetch(`${base}/ready`);
-                if (response.ok) { started = true; break; }
-            } catch { /* The process may still be loading dependencies. */ }
-            await new Promise(resolve => setTimeout(resolve, 50));
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const child = spawn(process.execPath, [".test-build/src/server.js"], {
+          env: {
+            ...process.env,
+            HOST: "127.0.0.1",
+            PORT: "33318",
+            AUTH_ENCRYPTION_KEYS: JSON.stringify({ v1: key }),
+            EVENT_SIGNING_KEYS: JSON.stringify({
+              [app]: {
+                current: "v1",
+                keys: { v1: randomBytes(32).toString("base64") },
+              },
+            }),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        children.push(child);
+        child.stdout?.on("data", (b) => {
+          output += b;
+        });
+        child.stderr?.on("data", (b) => {
+          output += b;
+        });
+        let ready = false;
+        for (let i = 0; i < 100; i++) {
+          try {
+            ready = (await fetch("http://127.0.0.1:33318/ready")).ok;
+          } catch {}
+          if (ready) break;
+          if (child.exitCode !== null) break;
+          await wait(25);
         }
-        assert.ok(started, output);
-        const health = await fetch(`${base}/health`);
-        assert.deepEqual(await health.json(), { success: true });
-        const denied = await fetch(`${base}/api/whatsapp/check/status`);
-        assert.equal(denied.status, 401);
-        const status = await fetch(`${base}/api/whatsapp/check/status`, { headers: { Authorization: `Bearer ${token}`, 'X-WhatsApp-App-Id': 'release-test' } });
-        assert.equal(status.status, 200);
-        assert.deepEqual(await status.json(), { success: true, status: 'disconnected', phone: null });
-        assert.ok(!output.includes(token));
-        child.kill('SIGTERM');
-        await stopped;
-        assert.equal(child.exitCode, 0, output);
-        await assert.rejects(access(join(sessions, '.owner-lock')));
-        await access(registry);
+        assert.equal(ready, true, output);
+        const response = await fetch(
+          "http://127.0.0.1:33318/api/whatsapp/user/status",
+          {
+            headers: {
+              authorization: `Bearer ${token}`,
+              "x-whatsapp-app-id": app,
+            },
+          },
+        );
+        assert.equal(response.status, 200);
+        assert.equal(((await response.json()) as any).status, "disconnected");
+        const exited = new Promise<number | null>((resolve) =>
+          child.once("exit", resolve),
+        );
+        child.kill("SIGTERM");
+        assert.equal(await exited, 0);
+      }
+      assert.ok(!output.includes(token));
+      assert.ok(!output.includes(key));
     } finally {
-        if (child && child.exitCode === null) { child.kill('SIGTERM'); await stopped; }
-        await rm(root, { recursive: true, force: true });
+      for (const child of children)
+        if (child.exitCode === null) child.kill("SIGKILL");
+      await pool.query("DELETE FROM wa_applications WHERE app_id=?", [app]);
+      await pool.end();
     }
-});
-
-test('root endpoint identifies the service without disclosing session or credential data', async () => {
-    const { createApp } = await import('../src/app.js');
-    const { Sessions } = await import('../src/service.js');
-    const { default: request } = await import('supertest');
-    const app = createApp(new Sessions('/unused', () => { throw new Error('No browser needed for root'); }), {});
-    const response = await request(app).get('/').expect(200);
-    assert.deepEqual(response.body, { success: true, service: 'WhatsApp service', health: '/health', ready: '/ready' });
-    assert.equal(response.headers['cache-control'], 'no-store');
-});
+  },
+);

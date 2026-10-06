@@ -10,3 +10,6 @@ data/
 *.log
 .DS_Store
 coverage/
+
+deploy/secrets/
+*.wa-backup

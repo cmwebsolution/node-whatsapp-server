@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-06",
+  "runtime": "Node 24.21.0",
+  "database": "MySQL 8.4.11",
+  "transport": "synthetic",
+  "real_account_gate": "open",
+  "capacity_500_real_accounts": "not_approved",
+  "samples": [
+    {
+      "transport": "synthetic",
+      "storage": "memory",
+      "accounts": 500,
+      "seconds": 6,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 40,
+        "submitted": 10
+      },
+      "initialize_ms": 80,
+      "p50_ms": 1,
+      "p95_ms": 23,
+      "peak_rss_mib": 134,
+      "cpu_ms": 64,
+      "event_loop_p99_ms": 21,
+      "proves_real_account_capacity": false
+    },
+    {
+      "transport": "synthetic",
+      "storage": "sql",
+      "accounts": 500,
+      "seconds": 6,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 33,
+        "submitted": 17
+      },
+      "initialize_ms": 821,
+      "p50_ms": 53,
+      "p95_ms": 86,
+      "peak_rss_mib": 148,
+      "cpu_ms": 749,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    },
+    {
+      "transport": "synthetic",
+      "storage": "memory",
+      "accounts": 500,
+      "seconds": 6,
+      "media_bytes": 8388608,
+      "outcomes": {
+        "rejected": 40,
+        "submitted": 10
+      },
+      "initialize_ms": 76,
+      "p50_ms": 416,
+      "p95_ms": 798,
+      "peak_rss_mib": 650,
+      "cpu_ms": 1200,
+      "event_loop_p99_ms": 37,
+      "proves_real_account_capacity": false
+    }
+  ]
+}

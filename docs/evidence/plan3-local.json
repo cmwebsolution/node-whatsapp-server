@@ -1,0 +1,661 @@
+{
+  "recorded_at": "2026-10-06T05:52:09.461Z",
+  "scope": "local_synthetic_http_mysql",
+  "runtime": "v24.21.0",
+  "mysql": "8.4.11",
+  "source_sha256_at_delivery": "877ce5566c7b34d5dddd2629405e1797278f03350f279e1134f0e8eaf9be8317",
+  "lock_sha256": "109cd413c4880f4ebe4e3338145784ad3636aa79e8527e372cfeaa26a0a0d302",
+  "checks": {
+    "node_tests": 25,
+    "node_failed": 0,
+    "node_skipped": 0,
+    "release_check_tests": 2,
+    "laravel_tests": 57,
+    "laravel_assertions": 335,
+    "build": true,
+    "format": true,
+    "whitespace": true
+  },
+  "fault": {
+    "event": "synthetic_fault_evidence",
+    "crash_recovery_ms": 30477,
+    "network_recovery_ms": 815,
+    "database_recovery_ms": 50123,
+    "dispatches": 5,
+    "no_uncertain_replay": true,
+    "real_whatsapp": false
+  },
+  "limitations": {
+    "real_whatsapp_tested": false,
+    "container_runtime_tested": false,
+    "hosted_rollout_rollback_tested": false,
+    "representative_24h_soak": false,
+    "approved_real_sessions": 0,
+    "load_generator_shares_service_process": true,
+    "some_short_stages_shared_mysql_engine_with_other_fixtures": true
+  },
+  "results": [
+    {
+      "scenario": "stage-1",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:45:24.996Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "1",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 3233,
+          "mean_ms": 0,
+          "max_ms": 12,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 1,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 505,
+          "mean_ms": 0,
+          "max_ms": 1,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 1,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 100,
+          "errors": 0,
+          "capacity_rejected": 0,
+          "latency": {
+            "count": 100,
+            "mean_ms": 31,
+            "max_ms": 45,
+            "p50_ms": 50,
+            "p95_ms": 50,
+            "p99_ms": 50,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 1,
+      "seconds": 12,
+      "media_bytes": 0,
+      "outcomes": {
+        "submitted": 100
+      },
+      "initialize_ms": 57,
+      "latency": {
+        "count": 100,
+        "mean_ms": 32,
+        "max_ms": 47,
+        "p50_ms": 50,
+        "p95_ms": 50,
+        "p99_ms": 50,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 166,
+      "cpu_ms": 880,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "stage-10",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:45:38.706Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "10",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 3512,
+          "mean_ms": 1,
+          "max_ms": 61,
+          "p50_ms": 1,
+          "p95_ms": 5,
+          "p99_ms": 10,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 550,
+          "mean_ms": 0,
+          "max_ms": 7,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 5,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 100,
+          "errors": 0,
+          "capacity_rejected": 0,
+          "latency": {
+            "count": 100,
+            "mean_ms": 40,
+            "max_ms": 102,
+            "p50_ms": 50,
+            "p95_ms": 100,
+            "p99_ms": 100,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 10,
+      "seconds": 12,
+      "media_bytes": 0,
+      "outcomes": {
+        "submitted": 100
+      },
+      "initialize_ms": 82,
+      "latency": {
+        "count": 100,
+        "mean_ms": 44,
+        "max_ms": 109,
+        "p50_ms": 50,
+        "p95_ms": 100,
+        "p99_ms": 250,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 178,
+      "cpu_ms": 514,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "stage-50",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:45:52.400Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "50",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 3650,
+          "mean_ms": 1,
+          "max_ms": 28,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 25,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 634,
+          "mean_ms": 7,
+          "max_ms": 54,
+          "p50_ms": 5,
+          "p95_ms": 50,
+          "p99_ms": 50,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 100,
+          "errors": 58,
+          "capacity_rejected": 58,
+          "latency": {
+            "count": 100,
+            "mean_ms": 67,
+            "max_ms": 106,
+            "p50_ms": 100,
+            "p95_ms": 250,
+            "p99_ms": 250,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 50,
+      "seconds": 12,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 58,
+        "submitted": 42
+      },
+      "initialize_ms": 142,
+      "latency": {
+        "count": 100,
+        "mean_ms": 85,
+        "max_ms": 135,
+        "p50_ms": 100,
+        "p95_ms": 250,
+        "p99_ms": 250,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 225,
+      "cpu_ms": 512,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "stage-100",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:46:06.538Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "100",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 5200,
+          "mean_ms": 0,
+          "max_ms": 30,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 25,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 884,
+          "mean_ms": 5,
+          "max_ms": 63,
+          "p50_ms": 1,
+          "p95_ms": 50,
+          "p99_ms": 100,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 100,
+          "errors": 58,
+          "capacity_rejected": 58,
+          "latency": {
+            "count": 100,
+            "mean_ms": 74,
+            "max_ms": 119,
+            "p50_ms": 100,
+            "p95_ms": 250,
+            "p99_ms": 250,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 100,
+      "seconds": 12,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 58,
+        "submitted": 42
+      },
+      "initialize_ms": 244,
+      "latency": {
+        "count": 100,
+        "mean_ms": 93,
+        "max_ms": 142,
+        "p50_ms": 250,
+        "p95_ms": 250,
+        "p99_ms": 250,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 189,
+      "cpu_ms": 683,
+      "event_loop_p99_ms": 21,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "capacity",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:46:05.006Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "250",
+        "pending_submissions": "1",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "2211840",
+          "index_bytes": "1261568",
+          "estimated_rows": "5048"
+        },
+        "sql_latency": {
+          "count": 84927,
+          "mean_ms": 1,
+          "max_ms": 163,
+          "p50_ms": 1,
+          "p95_ms": 5,
+          "p99_ms": 25,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 17650,
+          "mean_ms": 7,
+          "max_ms": 234,
+          "p50_ms": 1,
+          "p95_ms": 50,
+          "p99_ms": 100,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 2500,
+          "errors": 1675,
+          "capacity_rejected": 1675,
+          "latency": {
+            "count": 2500,
+            "mean_ms": 71,
+            "max_ms": 460,
+            "p50_ms": 100,
+            "p95_ms": 250,
+            "p99_ms": 500,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 250,
+      "seconds": 300,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 1675,
+        "submitted": 825
+      },
+      "initialize_ms": 466,
+      "latency": {
+        "count": 2500,
+        "mean_ms": 82,
+        "max_ms": 489,
+        "p50_ms": 100,
+        "p95_ms": 250,
+        "p99_ms": 500,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 254,
+      "cpu_ms": 9652,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "500",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:43:45.600Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "500",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 35384,
+          "mean_ms": 0,
+          "max_ms": 157,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 10,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 6856,
+          "mean_ms": 4,
+          "max_ms": 300,
+          "p50_ms": 1,
+          "p95_ms": 25,
+          "p99_ms": 50,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 500,
+          "errors": 322,
+          "capacity_rejected": 322,
+          "latency": {
+            "count": 500,
+            "mean_ms": 83,
+            "max_ms": 464,
+            "p50_ms": 100,
+            "p95_ms": 500,
+            "p99_ms": 500,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 500,
+      "seconds": 60,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 322,
+        "submitted": 178
+      },
+      "initialize_ms": 740,
+      "latency": {
+        "count": 500,
+        "mean_ms": 95,
+        "max_ms": 468,
+        "p50_ms": 100,
+        "p95_ms": 500,
+        "p99_ms": 500,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 232,
+      "cpu_ms": 3145,
+      "event_loop_p99_ms": 23,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "media",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:45:18.476Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "11",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 5172,
+          "mean_ms": 3,
+          "max_ms": 465,
+          "p50_ms": 1,
+          "p95_ms": 5,
+          "p99_ms": 100,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 890,
+          "mean_ms": 2,
+          "max_ms": 52,
+          "p50_ms": 1,
+          "p95_ms": 10,
+          "p99_ms": 50,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 500,
+          "errors": 400,
+          "capacity_rejected": 400,
+          "latency": {
+            "count": 500,
+            "mean_ms": 84,
+            "max_ms": 716,
+            "p50_ms": 1,
+            "p95_ms": 250,
+            "p99_ms": 1000,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 10,
+      "seconds": 60,
+      "media_bytes": 8388608,
+      "outcomes": {
+        "rejected": 400,
+        "submitted": 100
+      },
+      "initialize_ms": 80,
+      "latency": {
+        "count": 500,
+        "mean_ms": 247,
+        "max_ms": 1090,
+        "p50_ms": 250,
+        "p95_ms": 500,
+        "p99_ms": 1000,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 1037,
+      "cpu_ms": 27124,
+      "event_loop_p99_ms": 176,
+      "proves_real_account_capacity": false
+    },
+    {
+      "scenario": "500-soak",
+      "transport": "synthetic_http_same_process_client",
+      "process_measurement_includes_client": true,
+      "timestamp": "2026-10-06T05:51:30.920Z",
+      "runtime": "v24.21.0",
+      "database_metrics": {
+        "leased_sessions": "500",
+        "pending_submissions": "0",
+        "active_dispatches": "0",
+        "storage": {
+          "data_bytes": "573440",
+          "index_bytes": "475136",
+          "estimated_rows": "2036"
+        },
+        "sql_latency": {
+          "count": 122247,
+          "mean_ms": 0,
+          "max_ms": 44,
+          "p50_ms": 1,
+          "p95_ms": 1,
+          "p99_ms": 10,
+          "quantiles": "bucket_upper_bound"
+        },
+        "pool_wait": {
+          "count": 26210,
+          "mean_ms": 4,
+          "max_ms": 96,
+          "p50_ms": 1,
+          "p95_ms": 50,
+          "p99_ms": 100,
+          "quantiles": "bucket_upper_bound"
+        },
+        "sql_failures": 0,
+        "pool_limit": 10
+      },
+      "api_metrics": {
+        "api": {
+          "requests": 2500,
+          "errors": 1645,
+          "capacity_rejected": 1645,
+          "latency": {
+            "count": 2500,
+            "mean_ms": 64,
+            "max_ms": 151,
+            "p50_ms": 100,
+            "p95_ms": 250,
+            "p99_ms": 250,
+            "quantiles": "bucket_upper_bound"
+          },
+          "active_requests": 0,
+          "active_media_requests": 0,
+          "media_request_limit": 4
+        }
+      },
+      "storage": "sql",
+      "accounts": 500,
+      "seconds": 300,
+      "media_bytes": 0,
+      "outcomes": {
+        "rejected": 1645,
+        "submitted": 855
+      },
+      "initialize_ms": 735,
+      "latency": {
+        "count": 2500,
+        "mean_ms": 74,
+        "max_ms": 160,
+        "p50_ms": 100,
+        "p95_ms": 250,
+        "p99_ms": 250,
+        "quantiles": "bucket_upper_bound"
+      },
+      "peak_rss_mib": 265,
+      "cpu_ms": 11889,
+      "event_loop_p99_ms": 22,
+      "proves_real_account_capacity": false
+    }
+  ]
+}

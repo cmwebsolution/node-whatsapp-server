@@ -1,78 +1,96 @@
-import './browser-cache.js';
-import whatsapp from 'whatsapp-web.js';
-import { EventEmitter } from 'node:events';
-import type { Driver } from './service.js';
-export function acceptedMessageId(message: unknown): string | null {
-    const id = (message as {id?: {_serialized?: unknown; $1?: unknown}} | undefined)?.id;
-    const value = id?._serialized ?? id?.$1;
-    if (typeof value !== 'string' || !value.trim()) {
-        return null;
+import makeWASocket, { DisconnectReason } from "@whiskeysockets/baileys";
+import pino from "pino";
+import { databaseAuth } from "./auth.js";
+import type { Lease, Store } from "./store.js";
+import type { Driver, DriverEvent } from "./service.js";
+export async function driver(
+  store: Store,
+  lease: Lease,
+  onEvent: (event: DriverEvent) => void,
+): Promise<Driver> {
+  const auth = await databaseAuth(store, lease);
+  const socket = makeWASocket({
+    auth: auth.state,
+    logger: pino({ level: "silent" }),
+    connectTimeoutMs: 30000,
+    defaultQueryTimeoutMs: 30000,
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+  });
+  let stopped = false;
+  const fail = () => {
+    if (!stopped) {
+      stopped = true;
+      socket.end(new Error("Authentication persistence unavailable"));
+      onEvent({ kind: "close", loggedOut: false });
     }
-    return value;
-}
-export function driver(key: string, root: string): Driver {
-    const client = new whatsapp.Client({
-        authStrategy: new whatsapp.LocalAuth({ clientId: key, dataPath: root }),
-        authTimeoutMs: 60000,
-        qrMaxRetries: 10,
-        puppeteer: {
-            headless: true,
-            timeout: 30000,
-            executablePath: process.env.CHROME_PATH || undefined,
-            args: process.env.CHROME_NO_SANDBOX === 'true' ? ['--no-sandbox', '--disable-setuid-sandbox'] : [],
-        },
-    });
-    return createDriver(client);
-}
-export function createDriver(client: whatsapp.Client): Driver {
-    const bridge = new EventEmitter() as Driver;
-    let initialization: Promise<void> | undefined;
-    let stopping = false;
-    let destruction: Promise<void> | undefined;
-    let authenticated = false;
-    client.on('authenticated', () => {
-        authenticated = true;
-    });
-    for (const event of ['qr', 'ready', 'authenticated', 'disconnected', 'auth_failure']) {
-        client.on(event, (...args: unknown[]) => {
-            if (!stopping) {
-                bridge.emit(event, ...args);
-            }
-        });
+  };
+  socket.ev.on("creds.update", () => {
+    void auth.save().catch(fail);
+  });
+  socket.ev.on("connection.update", (update) => {
+    if (stopped) return;
+    if (update.qr) onEvent({ kind: "qr", qr: update.qr });
+    if (update.connection === "open")
+      void auth
+        .flush()
+        .then(() => {
+          if (!stopped) {
+            const phone = socket.user?.id.split(":")[0].split("@")[0];
+            if (phone && /^[1-9]\d{6,14}$/.test(phone))
+              onEvent({ kind: "open", phone });
+            else fail();
+          }
+        })
+        .catch(fail);
+    if (update.connection === "close") {
+      const code = (
+        update.lastDisconnect?.error as { output?: { statusCode?: number } }
+      )?.output?.statusCode;
+      onEvent({
+        kind: "close",
+        loggedOut: code === DisconnectReason.loggedOut,
+        terminal:
+          code === DisconnectReason.connectionReplaced ||
+          code === DisconnectReason.badSession ||
+          code === DisconnectReason.multideviceMismatch,
+      });
     }
-    bridge.initialize = () => {
-        initialization = client.initialize();
-        return initialization;
-    };
-    const destroy = async () => {
-        stopping = true;
-        // Closing while initialize launches must also close a browser assigned later.
-        const interval = setInterval(() => {
-            void client.destroy().catch(() => {
-            });
-        }, 100);
-        try {
-            await client.destroy();
-            await initialization?.catch(() => {
-            });
-            await client.destroy();
-        }
-        finally {
-            clearInterval(interval);
-        }
-    };
-    bridge.destroy = () => destruction ??= destroy();
-    bridge.logout = async () => {
-        if (authenticated) {
-            await client.logout();
-        }
-    };
-    bridge.phone = () => client.info?.wid?.user ?? null;
-    bridge.ready = async () => !stopping && await client.getState() === 'CONNECTED';
-    bridge.send = async (phone, message) => acceptedMessageId(await client.sendMessage(`${phone}@c.us`, message, {sendSeen: false, waitUntilMsgSent: true}));
-    bridge.sendMedia = async (phone, media) => {
-        const attachment = new whatsapp.MessageMedia(media.mimetype, media.data, media.filename);
-        return acceptedMessageId(await client.sendMessage(`${phone}@c.us`, attachment, {sendSeen: false, waitUntilMsgSent: true, caption: media.caption, sendMediaAsDocument: media.mimetype === 'application/pdf'}));
-    };
-    return bridge;
+  });
+  return {
+    close: async () => {
+      stopped = true;
+      socket.end(undefined);
+      await auth.flush();
+    },
+    logout: async () => {
+      stopped = true;
+      await socket.logout();
+      await auth.flush();
+    },
+    send: async (payload) => {
+      await auth.flush();
+      if (stopped) throw new Error("Socket stopped");
+      const content =
+        payload.kind === "text"
+          ? { text: payload.message! }
+          : payload.media!.mimetype === "image/png"
+            ? {
+                image: Buffer.from(payload.media!.data, "base64"),
+                caption: payload.media!.caption,
+              }
+            : {
+                document: Buffer.from(payload.media!.data, "base64"),
+                mimetype: "application/pdf",
+                fileName: payload.media!.filename,
+                caption: payload.media!.caption,
+              };
+      const message = await socket.sendMessage(
+        `${payload.phone}@s.whatsapp.net`,
+        content,
+      );
+      await auth.flush();
+      return message?.key.id ?? null;
+    },
+  };
 }

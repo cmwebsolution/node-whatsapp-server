@@ -13,3 +13,6 @@ data
 coverage
 tests
 docs
+
+deploy
+*.wa-backup

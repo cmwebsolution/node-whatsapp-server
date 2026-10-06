@@ -1,0 +1,73 @@
+# Invoke with --env-file /etc/whatsapp/runtime.env. Never commit secrets.
+services:
+  database:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: whatsapp
+      MYSQL_USER: whatsapp
+      MYSQL_PASSWORD_FILE: /run/secrets/database_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/root_password
+    secrets: [database_password, root_password]
+    volumes: [database:/var/lib/mysql]
+    networks: [database]
+    mem_limit: ${MYSQL_MEMORY_LIMIT:?Set measured MySQL memory allocation}
+    cpus: ${MYSQL_CPUS:?Set MySQL CPU allocation}
+    stop_grace_period: 60s
+    healthcheck:
+      test: [CMD, mysqladmin, ping, -h, localhost, --silent]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  service:
+    image: ${WHATSAPP_IMAGE:?Use an immutable image digest}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    ports: [127.0.0.1:3001:3001]
+    networks: [database, outbound]
+    depends_on:
+      database:
+        condition: service_healthy
+    secrets: [database_password, auth_keys, signing_keys]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      DB_HOST: database
+      DB_NAME: whatsapp
+      DB_USER: whatsapp
+      DB_PASSWORD_FILE: /run/secrets/database_password
+      DB_POOL_SIZE: 10
+      AUTH_ENCRYPTION_KEYS_FILE: /run/secrets/auth_keys
+      AUTH_ENCRYPTION_KEY_VERSION: ${AUTH_ENCRYPTION_KEY_VERSION:-v1}
+      EVENT_SIGNING_KEYS_FILE: /run/secrets/signing_keys
+      MAX_SESSIONS: ${SUPPORTED_SESSION_LIMIT:-1}
+      CONNECTION_CONCURRENCY: ${CONNECTION_CONCURRENCY:-5}
+      RESTORE_STAGGER_MS: ${RESTORE_STAGGER_MS:-100}
+      MEDIA_REQUEST_CONCURRENCY: ${MEDIA_REQUEST_CONCURRENCY:-4}
+      MEDIA_SEND_CONCURRENCY: ${MEDIA_SEND_CONCURRENCY:-2}
+      SHUTDOWN_TIMEOUT_MS: 30000
+    mem_limit: ${NODE_MEMORY_LIMIT:?Set measured Node memory allocation}
+    cpus: ${NODE_CPUS:?Set Node CPU allocation}
+    stop_grace_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+volumes:
+  database:
+networks:
+  database:
+    internal: true
+  outbound: {}
+secrets:
+  database_password:
+    file: ${SECRET_DIRECTORY:?Set absolute private secret directory}/database-password
+  root_password:
+    file: ${SECRET_DIRECTORY}/root-password
+  auth_keys:
+    file: ${SECRET_DIRECTORY}/auth-keys.json
+  signing_keys:
+    file: ${SECRET_DIRECTORY}/signing-keys.json

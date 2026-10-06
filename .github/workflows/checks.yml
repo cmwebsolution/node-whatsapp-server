@@ -1,0 +1,49 @@
+name: Node service checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_DATABASE: whatsapp_test
+          MYSQL_USER: whatsapp
+          MYSQL_PASSWORD: test-password
+          MYSQL_ROOT_PASSWORD: root-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot-test-password --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: whatsapp_test
+      DB_USER: whatsapp
+      DB_PASSWORD: test-password
+      RUN_DATABASE_TESTS: "1"
+      RUN_BACKUP_TESTS: "1"
+      RUN_FAULT_TESTS: "1"
+      TEST_DB_ADMIN_PASSWORD: root-test-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y mysql-client
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag whatsapp-service:check .
