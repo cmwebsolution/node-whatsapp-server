@@ -66,3 +66,5 @@ curl --fail http://127.0.0.1:3001/ready
 Readiness verifies storage availability, not every account's WhatsApp connection. Pair one real account, submit a consenting recipient's test message, and verify restoration after restart. Automated tests use fake WhatsApp transports. This storage implementation has not established 500-session production capacity.
 
 Advanced signed event reconciliation remains optional (`EVENT_SIGNING_KEYS` on Node and corresponding keys on Laravel). The historical SQL adapter and its gated tests/tools remain for compatibility, but are not used by the server or normal provisioning. Earlier SQL capacity evidence does not validate the new file backend.
+
+Managed hosts that load entries with `require()` (including LiteSpeed/Hostinger): set entry file to `dist/host-entry.cjs`. The build emits this CommonJS wrapper, which dynamically imports the ESM server. Direct `npm start` remains supported.

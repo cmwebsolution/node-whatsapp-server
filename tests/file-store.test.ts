@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, readdir, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  copyFile,
+  readFile,
+  rm,
+  readdir,
+  stat,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileStore } from "../src/file-store.js";
@@ -173,11 +180,18 @@ test("actual Node process provisions and restarts without database, Docker or ma
       await readFile(join(root, "credentials", "app.token"), "utf8"),
       "a".repeat(43),
     );
+    await copyFile("scripts/host-entry.cjs", ".test-build/src/host-entry.cjs");
     for (let attempt = 0; attempt < 2; attempt++) {
-      const child = spawn(process.execPath, [".test-build/src/server.js"], {
-        env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const child = spawn(
+        process.execPath,
+        attempt === 0
+          ? [".test-build/src/server.js"]
+          : ["-e", 'require("./.test-build/src/host-entry.cjs")'],
+        {
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       child.stdout.on("data", (b) => (output += b));
       child.stderr.on("data", (b) => (output += b));
       const exited = exitOf(child);
