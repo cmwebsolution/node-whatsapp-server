@@ -3,7 +3,12 @@ import { Histogram } from "./statistics.js";
 import QRCode from "qrcode";
 import type { Media } from "./media.js";
 import { ApiError } from "./errors.js";
-import { keyFor, type Lease, type Store, type Submission } from "./store.js";
+import {
+  keyFor,
+  type Lease,
+  type Store,
+  type Submission,
+} from "./store-contract.js";
 export { ApiError, keyFor };
 export type Payload = {
   kind: "text" | "media";

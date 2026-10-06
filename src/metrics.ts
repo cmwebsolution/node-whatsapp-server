@@ -27,7 +27,7 @@ export function startMetrics(snapshot: () => Promise<unknown>) {
     void snapshot()
       .then((sessions) => console.log(JSON.stringify({ ...metrics, sessions })))
       .catch(() =>
-        console.log(JSON.stringify({ ...metrics, database_available: false })),
+        console.log(JSON.stringify({ ...metrics, storage_available: false })),
       )
       .finally(() => {
         busy = false;

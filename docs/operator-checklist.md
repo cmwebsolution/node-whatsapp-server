@@ -1,3 +1,5 @@
+> Historical SQL-backend reference. The default service now uses private files and direct Laravel HTTP; see [current setup](../README.md). SQL capacity, deployment and backup evidence below does not establish readiness for the file backend.
+
 # Operator checklist
 
 Before enabling business sends:

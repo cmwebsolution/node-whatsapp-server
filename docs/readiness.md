@@ -1,3 +1,5 @@
+> Historical SQL-backend reference. The default service now uses private files and direct Laravel HTTP; see [current setup](../README.md). SQL capacity, deployment and backup evidence below does not establish readiness for the file backend.
+
 # Production readiness — 6 October 2026
 
 The lightweight service and separate Laravel package are implemented and locally verified. The deployment candidate is an independent Linux container host with dedicated MySQL 8.4; Laravel retains its own MySQL database and business queues. No external host has been provisioned or tested. **Approved real-account production capacity: zero. Pilot configuration: one session. Production release gate: open.**

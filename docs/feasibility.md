@@ -1,3 +1,5 @@
+> Historical SQL-backend reference. The default service now uses private files and direct Laravel HTTP; see [current setup](../README.md). SQL capacity, deployment and backup evidence below does not establish readiness for the file backend.
+
 > Plan 3 deployment candidate: independent Linux VPS/container with dedicated MySQL. Laravel remains a separate application with its own MySQL. Historical Business-only constraints below are retained as investigation evidence, not the selected deployment target.
 
 # Feasibility report — 6 October 2026

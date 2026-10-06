@@ -1,64 +1,68 @@
 # Shared WhatsApp service
 
-Fastify + Baileys service for authenticated Laravel applications. WhatsApp credentials and Signal keys are stored by Node in encrypted MySQL records. Chromium and filesystem authentication are no longer used.
+Lightweight Fastify + Baileys service for Laravel. No Chromium, Docker, MySQL or migrations are required for normal operation. Authentication and submission records live in private files under `DATA_DIR`. One running process owns that directory.
 
-**Production candidate:** independent Linux VPS/container hosting with dedicated MySQL. **Production approval remains open** until the hosted real-account gate passes. Start with [deployment instructions](docs/deployment.md), [API contract](docs/contract.md), and [readiness evidence](docs/readiness.md).
+## Local setup
 
-## Stack and checks
-
-Node 24.21.0, Fastify 5.12.5, Baileys 6.7.24, mysql2 3.24.5, pino 9.14.0 and qrcode 1.5.4. Dependency resolutions are locked in `package-lock.json`; Baileys' Git-based libsignal dependency is locked to a commit. No automatic switch to a prerelease is permitted.
+Use Node 24.x (the version pinned in `.nvmrc` is recommended):
 
 ```sh
 nvm install
 nvm use
 npm ci
+cp -n .env.example .env
+npm run provision -- billingapp
+npm run dev
+```
+
+Provision once per application, with the server stopped. The command generates a private application token in `data/credentials/billingapp.token`; install that token in Laravel. It saves only the token digest in the application registry. You may supply `PROVISION_TOKEN` privately to retain an existing Laravel token. Restart after provisioning. Provisioning never prints secrets.
+
+Minimal Node environment:
+
+```dotenv
+HOST=127.0.0.1
+PORT=3001
+DATA_DIR=./data
+MAX_SESSIONS=20
+```
+
+The service generates its storage encryption key automatically. Keep the complete `data` directory, including `encryption-key.json`, across restarts/deployments. Authentication records are encrypted; the local master key must remain private with restricted filesystem access. Back up the stopped service's entire directory to protected storage. Losing the key requires pairing again; the service refuses to generate a replacement key over existing sessions.
+
+Laravel environment:
+
+```dotenv
+WHATSAPP_NODE_URL=http://127.0.0.1:3001
+WHATSAPP_APP_ID=billingapp
+WHATSAPP_NODE_TOKEN=<private token from provisioning>
+WHATSAPP_REQUIRE_HTTPS=false
+```
+
+The Laravel package uses direct HTTP by default. No package migrations or event-signing keys are required. Obtain `newIntent()` once and save its ID in your business record before sending. Pass it to `sendText` / `sendMedia`; use `submission(id)` after an uncertain result. Never create a fresh ID to retry an uncertain send. Node retains submission records for seven days; missing records do not authorize a resend.
+
+## Running on a server
+
+```sh
+npm ci
+npm run build
+npm run provision:production -- billingapp
+npm start
+```
+
+Use your hosting process supervisor to run `npm start`, with one instance and at least 40 seconds termination grace. Use a persistent private absolute `DATA_DIR` outside the public web directory. Configure the hosting-supplied port and `HOST=0.0.0.0` when needed; otherwise keep loopback behind an HTTPS reverse proxy. Laravel must use HTTPS for public connections. Do not enable process cluster mode or overlapping deployments against the same storage.
+
+After an unclean crash, the service automatically recovers an owner lock when its recorded local PID is confirmed dead. Incomplete startup locks or reused PIDs need manual recovery. Stop the supervisor and verify the PID in `DATA_DIR/.owner-lock/owner.json` is no longer running. Only then remove that lock directory (and any stale `.recovery-lock`) and restart; preserve all other data.
+
+## API and checks
+
+Existing authenticated endpoints remain compatible: connect, status, QR, disconnect, send-message, send-media, and submission lookup. Send requests require a stable `Idempotency-Key`. Application tokens stay in Laravel server configuration, never browser code. Each app/user pair is isolated.
+
+```sh
 npm run build
 npm test
+curl --fail http://127.0.0.1:3001/health
+curl --fail http://127.0.0.1:3001/ready
 ```
 
-Default tests use a synthetic WhatsApp transport. SQL/lifecycle tests require a **dedicated disposable test database**, then:
+Readiness verifies storage availability, not every account's WhatsApp connection. Pair one real account, submit a consenting recipient's test message, and verify restoration after restart. Automated tests use fake WhatsApp transports. This storage implementation has not established 500-session production capacity.
 
-```sh
-RUN_DATABASE_TESTS=1 npm test
-```
-
-Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` privately. Compose supplies a local MySQL 8.4.11 LTS test database on loopback port 3307; it is not a production deployment recommendation. CI runs the SQL suite against MySQL 8.4.11 LTS. The build cleans old compiled browser modules.
-
-## First deployment
-
-Configure a dedicated MySQL 8.4 LTS endpoint reachable from the independent Node host. Confirm the actual engine first; the startup guard requires MySQL. Configure the variables in `.env.example` through hosting secrets, run `npm run migrate:production`, provision an application using `PROVISION_TOKEN` and `npm run provision:production -- application-id`, remove `PROVISION_TOKEN`, and start `dist/server.js`. `PROVISION_TOKEN` is the same private bearer token installed in Laravel; the database retains only its SHA-256 digest.
-
-Generate a random 32-byte application token and a separate random 32-byte encryption master key using your private secret-management workflow. The token is base64url; the encryption key is standard base64. `AUTH_ENCRYPTION_KEYS` is a JSON map, such as `{"v1":"<private-base64-key>"}`. Never put actual keys in source code, chat, or logs. `AUTH_ENCRYPTION_KEY_VERSION=v1` selects new writes. Preserve old key versions until all records and retained backups have been re-encrypted or expired.
-
-## Laravel changes
-
-The sibling `whatsapp-laravel` source has been updated with these methods:
-
-```php
-$session = WhatsApp::forUser(auth()->user());
-$result = $session->sendText($phone, $message, $intent->idempotency_key);
-$result = $session->sendMedia($phone, $media, $mediaIntent->idempotency_key);
-$result = $session->submission($intent->idempotency_key);
-```
-
-Persist one UUID per authorized business send intent **before** contacting Node. Reuse it for that intent. Store and display `pending`, `submitted`, `failed`, and `unknown` results. Look up uncertain submissions; never automatically resend them. Protect older intents in Laravel beyond Node's seven-day retention. Sending a new intent needs an explicit user action.
-
-Install the updated package release in Laravel; editing package source does not update an application's installed vendor directory. Set `WHATSAPP_NODE_URL`, `WHATSAPP_APP_ID`, `WHATSAPP_NODE_TOKEN`, `WHATSAPP_NODE_TIMEOUT=40`, and `WHATSAPP_REQUIRE_HTTPS=true`; rebuild Laravel config and reload persistent workers. Existing send callers need the new required key argument. Existing Chromium-linked accounts must pair again.
-
-## Synthetic workload tools
-
-```sh
-npm run benchmark
-BENCHMARK_DATABASE=true npm run benchmark
-BENCHMARK_SECONDS=60 BENCHMARK_MEDIA_BYTES=8388608 npm run benchmark
-```
-
-The defaults represent 500 synthetic sessions, 500 sends/minute and bursts of up to 50 requests. They never connect to WhatsApp. SQL benchmarks create and remove records under a random benchmark application ID and must use a disposable test database. Results are overhead measurements, not proof of 500 real connected accounts.
-
-For the real Laravel HTTP wire test, first run `npm test`, then `node scripts/contract-server.mjs`; in the sibling package run `RUN_WIRE_CONTRACT=1 vendor/bin/phpunit`. Stop the loopback fixture afterward. It uses a synthetic transport and fixed test credentials, and must never be deployed.
-
-Plan 2 adds immediate execution backpressure, a transactional append-only event journal, versioned HMAC signatures, and paginated reconciliation snapshots. Set `EVENT_SIGNING_KEYS` independently from authentication encryption keys. The reusable Laravel package supplies persistent intent/snapshot/dedup/cursor migrations and `whatsapp:reconcile`; the consuming app runs it every minute and owns its queues and business authorization. See [production setup](docs/production.md) and [API contract](docs/contract.md). HisabWala changes are outside this phase.
-
-## Production readiness
-
-See [deployment and rollback](docs/deployment.md) and the [operator checklist](docs/operator-checklist.md). Production defaults to one pilot session; no real-account capacity is approved. Encrypted backups use `node scripts/backup.mjs create|verify|restore PATH`. Run storage/crash drills only against a disposable database with `RUN_DATABASE_TESTS=1 RUN_BACKUP_TESTS=1 RUN_FAULT_TESTS=1 npm test`. Backup tests additionally need MySQL client binaries and isolated test administrative credentials.
+Advanced signed event reconciliation remains optional (`EVENT_SIGNING_KEYS` on Node and corresponding keys on Laravel). The historical SQL adapter and its gated tests/tools remain for compatibility, but are not used by the server or normal provisioning. Earlier SQL capacity evidence does not validate the new file backend.
