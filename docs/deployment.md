@@ -68,3 +68,5 @@ Readiness verifies storage availability, not every account's WhatsApp connection
 Advanced signed event reconciliation remains optional (`EVENT_SIGNING_KEYS` on Node and corresponding keys on Laravel). The historical SQL adapter and its gated tests/tools remain for compatibility, but are not used by the server or normal provisioning. Earlier SQL capacity evidence does not validate the new file backend.
 
 Managed hosts that load entries with `require()` (including LiteSpeed/Hostinger): set entry file to `dist/host-entry.cjs`. The build emits this CommonJS wrapper, which dynamically imports the ESM server. Direct `npm start` remains supported.
+
+The HTTP server starts before an application is provisioned: `/` and `/health` work when storage initializes successfully. Authenticated API calls remain unavailable until provisioning; stop the server, provision, then restart. Startup failures report the phase and a safe error code without printing secrets.

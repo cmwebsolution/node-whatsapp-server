@@ -45,14 +45,16 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   void shutdown();
 });
+let startupPhase = "storage";
 try {
   await store.ready();
+  startupPhase = "application registry";
   const credentials = await store.credentials();
-  if (!Object.keys(credentials).length)
-    throw new Error("No applications provisioned");
+  startupPhase = "signing configuration";
   const signing = signingKeysFromEnvironment();
 
   app = createApp(sessions, credentials, signing, tuning.mediaRequests);
+  startupPhase = "HTTP listener";
   await app.listen({ port, host: process.env.HOST ?? "127.0.0.1" });
   stopMetrics = startMetrics(async () => ({
     ...sessions.snapshot(),
@@ -64,9 +66,23 @@ try {
     console.error("RESTORATION_UNAVAILABLE");
   });
   console.log("WhatsApp service listening.");
-} catch {
+} catch (error) {
+  const rawCode = (error as NodeJS.ErrnoException)?.code;
+  const code =
+    typeof rawCode === "string" &&
+    [
+      "EACCES",
+      "EPERM",
+      "ENOENT",
+      "EEXIST",
+      "EADDRINUSE",
+      "EROFS",
+      "ENOSPC",
+    ].includes(rawCode)
+      ? rawCode
+      : "CONFIGURATION_ERROR";
   console.error(
-    "STARTUP_UNAVAILABLE: verify DATA_DIR permissions, application provisioning and storage ownership.",
+    `STARTUP_UNAVAILABLE: phase=${startupPhase}; code=${code}. Verify private storage permissions/ownership and runtime configuration.`,
   );
   await shutdown();
   process.exitCode = 1;

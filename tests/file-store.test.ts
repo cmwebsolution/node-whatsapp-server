@@ -266,3 +266,45 @@ test("confirmed dead process ownership is recovered on restart", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("fresh unprovisioned service serves health and rejects unauthenticated API access", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = await mkdtemp(join(tmpdir(), "wa-fresh-"));
+  const child = spawn(process.execPath, [".test-build/src/server.js"], {
+    env: {
+      ...process.env,
+      DATA_DIR: root,
+      HOST: "127.0.0.1",
+      PORT: "33430",
+      EVENT_SIGNING_KEYS: "{}",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (b) => (output += b));
+  child.stderr.on("data", (b) => (output += b));
+  const exited = new Promise<number | null>((resolve) =>
+    child.once("exit", resolve),
+  );
+  try {
+    let healthy = false;
+    for (let i = 0; i < 100; i++) {
+      try {
+        healthy = (await fetch("http://127.0.0.1:33430/health")).ok;
+      } catch {}
+      if (healthy) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    assert.ok(healthy, output);
+    assert.equal((await fetch("http://127.0.0.1:33430/")).status, 200);
+    assert.equal((await fetch("http://127.0.0.1:33430/ready")).status, 200);
+    const response = await fetch(
+      "http://127.0.0.1:33430/api/whatsapp/user/status",
+    );
+    assert.equal(response.status, 401);
+  } finally {
+    child.kill("SIGTERM");
+    await exited;
+    await rm(root, { recursive: true, force: true });
+  }
+});
